@@ -9,11 +9,11 @@
         .container { max-width: 1100px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
         h2 { color: #1a5276; text-align: center; margin-bottom: 5px; }
         .subtitle { text-align: center; color: #7f8c8d; margin-bottom: 25px; }
-        .upload-area { border: 2px dashed #3498db; padding: 40px; text-align: center; cursor: pointer; background: #fbfffe; border-radius: 10px; }
+        .upload-area { border: 2px dashed #3498db; padding: 40px; text-align: center; cursor: pointer; background: #fbfffe; border-radius: 10px; transition: 0.3s; }
         .upload-area:hover { background: #e8f4fd; }
         table { width: 100%; border-collapse: collapse; margin-top: 25px; font-size: 0.9em; }
         th, td { border: 1px solid #e0e0e0; padding: 12px; text-align: right; }
-        th { background-color: #2ecc71; color: white; text-align: center; }
+        th { background-color: #2ecc71; color: white; text-align: center; font-weight: 600; }
         .total-global { background: #f1c40f; font-weight: bold; }
         .section-title { margin-top: 40px; color: #2c3e50; border-left: 5px solid #2ecc71; padding-left: 10px; }
         .credits { margin-top: 40px; border-top: 1px solid #eee; padding-top: 20px; font-size: 0.85em; color: #95a5a6; text-align: center; }
@@ -23,11 +23,11 @@
 
 <div class="container">
     <h2>Reporte de Cartera por Edades (CXC)</h2>
-    <p class="subtitle">Análisis Inteligente - Vibras Positivas HM</p>
+    <p class="subtitle">Análisis al 01/01/2026 - Vibras Positivas HM</p>
     
     <div class="upload-area" id="drop-area">
-        <strong>Arrastra aquí tu archivo Excel</strong> o haz clic para seleccionar<br>
-        <small>El sistema detectará automáticamente los encabezados en cualquier fila.</small>
+        <strong>Sube el archivo de Excel aquí</strong><br>
+        <small>Detección automática de razon_social, fecha y ttotal</small>
         <input type="file" id="fileInput" hidden accept=".xlsx, .xls, .csv">
     </div>
 
@@ -43,6 +43,7 @@
 <script>
 const fileInput = document.getElementById('fileInput');
 const dropArea = document.getElementById('drop-area');
+const FECHA_CORTE = new Date("2026-01-01T00:00:00");
 
 dropArea.addEventListener('click', () => fileInput.click());
 
@@ -53,8 +54,7 @@ fileInput.addEventListener('change', (e) => {
         const bstr = evt.target.result;
         const workbook = XLSX.read(bstr, { type: 'binary', cellDates: true });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        
-        // Convertimos a matriz (arreglo de arreglos) para buscar los títulos manualmente
+        // Leemos como matriz para no perder encabezados en fila 1
         const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
         procesarMatriz(matrix);
     };
@@ -62,7 +62,6 @@ fileInput.addEventListener('change', (e) => {
 });
 
 function procesarMatriz(matrix) {
-    const hoy = new Date("2026-01-01");
     const rangos = {
         '0-30': { total: 0, clientes: new Map() },
         '31-60': { total: 0, clientes: new Map() },
@@ -72,83 +71,85 @@ function procesarMatriz(matrix) {
         'mas_180': { total: 0, clientes: new Map() }
     };
 
-    let filaTitulos = -1;
     let colNombre = -1, colFecha = -1, colTotal = -1;
 
-    // BUSCADOR DE ENCABEZADOS: Recorre las primeras 20 filas buscando los títulos
-    for (let i = 0; i < Math.min(matrix.length, 20); i++) {
-        const fila = matrix[i].map(c => String(c).toLowerCase().trim());
-        if (fila.includes('razon_social') || fila.includes('cliente')) {
-            filaTitulos = i;
-            colNombre = fila.indexOf('razon_social') !== -1 ? fila.indexOf('razon_social') : fila.indexOf('cliente');
-            colFecha = fila.indexOf('fecha');
-            colTotal = fila.indexOf('ttotal');
-            break;
-        }
-    }
+    // Buscamos los encabezados en la primera fila
+    const encabezados = matrix[0].map(c => String(c).toLowerCase().trim());
+    colNombre = encabezados.indexOf('razon_social');
+    colFecha = encabezados.indexOf('fecha');
+    colTotal = encabezados.indexOf('ttotal');
 
-    if (filaTitulos === -1) {
-        alert("No se encontraron las columnas necesarias (razon_social, fecha, ttotal). Revisa el archivo.");
+    if (colNombre === -1 || colFecha === -1 || colTotal === -1) {
+        alert("No se encontraron las columnas: razon_social, fecha o ttotal en la fila 1.");
         return;
     }
 
-    // PROCESAMIENTO: Empezamos una fila después de los títulos
-    for (let i = filaTitulos + 1; i < matrix.length; i++) {
+    // Procesamos desde la fila 2 (índice 1)
+    for (let i = 1; i < matrix.length; i++) {
         const fila = matrix[i];
-        const nombre = String(fila[colNombre] || "").trim();
+        if (!fila[colNombre]) continue;
+
+        const nombre = String(fila[colNombre]).trim();
         const fechaRaw = fila[colFecha];
-        const totalRaw = fila[colTotal];
+        const montoRaw = fila[colTotal];
 
-        if (!nombre || nombre === "" || !fechaRaw) continue;
-
-        // Limpiar el monto (por si viene como texto con puntos o $)
+        // 1. Limpieza de Monto (quitar puntos, comas, signos)
         let monto = 0;
-        if (typeof totalRaw === 'string') {
-            monto = parseFloat(totalRaw.replace(/[$.]/g, '').replace(',', '.')) || 0;
+        if (typeof montoRaw === 'string') {
+            // Quitamos todo lo que no sea número o punto decimal
+            monto = parseFloat(montoRaw.replace(/[^\d.,-]/g, '').replace(/\./g, '').replace(',', '.')) || 0;
         } else {
-            monto = parseFloat(totalRaw) || 0;
+            monto = parseFloat(montoRaw) || 0;
         }
 
-        // Procesar la fecha
+        // 2. Procesar Fecha
         let fechaDoc = (fechaRaw instanceof Date) ? fechaRaw : new Date(fechaRaw);
+        
         if (isNaN(fechaDoc.getTime()) || monto === 0) continue;
 
-        const diffDays = Math.ceil(Math.abs(hoy - fechaDoc) / (1000 * 60 * 60 * 24));
-        let key = diffDays <= 30 ? '0-30' : 
-                  diffDays <= 60 ? '31-60' : 
-                  diffDays <= 90 ? '61-90' : 
-                  diffDays <= 120 ? '91-120' : 
-                  diffDays <= 180 ? '121-180' : 'mas_180';
+        // 3. Diferencia contra 01/01/2026
+        const diffTime = FECHA_CORTE - fechaDoc;
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        // Clasificación
+        let key = "";
+        if (diffDays <= 30) key = '0-30';
+        else if (diffDays <= 60) key = '31-60';
+        else if (diffDays <= 90) key = '61-90';
+        else if (diffDays <= 120) key = '91-120';
+        else if (diffDays <= 180) key = '121-180';
+        else key = 'mas_180';
 
         rangos[key].total += monto;
-        rangos[key].clientes.set(nombre, (rangos[key].clientes.get(nombre) || 0) + monto);
+        const subtotal = rangos[key].clientes.get(nombre) || 0;
+        rangos[key].clientes.set(nombre, subtotal + monto);
     }
 
-    renderizar(rangos);
+    renderizarTablas(rangos);
 }
 
-function renderizar(rangos) {
+function renderizarTablas(rangos) {
     let granTotal = 0;
-    let htmlRes = `<h3 class="section-title">Consolidado General</h3><table>
-        <tr><th>Rango de Días</th><th>Monto Total</th><th>Cant. Clientes</th></tr>`;
+    let htmlRes = `<h3 class="section-title">Resumen de Cartera</h3><table>
+        <tr><th>Rango</th><th>Total Dinero</th><th>Clientes Únicos</th></tr>`;
     
     for (const [rango, info] of Object.entries(rangos)) {
         granTotal += info.total;
         htmlRes += `<tr><td style="text-align:center">${rango} días</td>
-            <td>$ ${info.total.toLocaleString('es-CO')}</td>
+            <td>$ ${info.total.toLocaleString('es-CO', {minimumFractionDigits: 0})}</td>
             <td style="text-align:center">${info.clientes.size}</td></tr>`;
     }
-    htmlRes += `<tr class="total-global"><td>TOTAL GENERAL</td><td>$ ${granTotal.toLocaleString('es-CO')}</td><td>-</td></tr></table>`;
+    htmlRes += `<tr class="total-global"><td>TOTAL CARTERA</td><td>$ ${granTotal.toLocaleString('es-CO')}</td><td>-</td></tr></table>`;
     
-    let htmlDet = `<h3 class="section-title">Detalle por Cliente</h3><table>
-        <tr><th>Cliente</th><th>Rango</th><th>Saldo</th></tr>`;
+    let htmlDet = `<h3 class="section-title">Detalle de Saldos</h3><table>
+        <tr><th>Cliente</th><th>Rango</th><th>Monto</th></tr>`;
     
     Object.entries(rangos).forEach(([rango, info]) => {
         const sorted = new Map([...info.clientes.entries()].sort((a, b) => b[1] - a[1]));
         sorted.forEach((monto, nombre) => {
             htmlDet += `<tr><td style="text-align:left">${nombre}</td>
                 <td style="text-align:center">${rango} días</td>
-                <td>$ ${monto.toLocaleString('es-CO')}</td></tr>`;
+                <td>$ ${monto.toLocaleString('es-CO', {minimumFractionDigits: 0})}</td></tr>`;
         });
     });
 
