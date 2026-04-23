@@ -27,7 +27,7 @@
     
     <div class="upload-area" id="drop-area">
         <strong>Sube el archivo de Excel aquí</strong><br>
-        <small>Detección automática de razon_social, fecha y ttotal</small>
+        <small>Encabezados en Fila 1: razon_social, fecha, ttotal</small>
         <input type="file" id="fileInput" hidden accept=".xlsx, .xls, .csv">
     </div>
 
@@ -43,7 +43,7 @@
 <script>
 const fileInput = document.getElementById('fileInput');
 const dropArea = document.getElementById('drop-area');
-const FECHA_CORTE = new Date("2026-01-01T00:00:00");
+const FECHA_CORTE = new Date(2026, 0, 1); // 1 de Enero de 2026
 
 dropArea.addEventListener('click', () => fileInput.click());
 
@@ -54,7 +54,6 @@ fileInput.addEventListener('change', (e) => {
         const bstr = evt.target.result;
         const workbook = XLSX.read(bstr, { type: 'binary', cellDates: true });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        // Leemos como matriz para no perder encabezados en fila 1
         const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
         procesarMatriz(matrix);
     };
@@ -71,47 +70,51 @@ function procesarMatriz(matrix) {
         'mas_180': { total: 0, clientes: new Map() }
     };
 
-    let colNombre = -1, colFecha = -1, colTotal = -1;
-
-    // Buscamos los encabezados en la primera fila
     const encabezados = matrix[0].map(c => String(c).toLowerCase().trim());
-    colNombre = encabezados.indexOf('razon_social');
-    colFecha = encabezados.indexOf('fecha');
-    colTotal = encabezados.indexOf('ttotal');
+    const colNombre = encabezados.indexOf('razon_social');
+    const colFecha = encabezados.indexOf('fecha');
+    const colTotal = encabezados.indexOf('ttotal');
 
     if (colNombre === -1 || colFecha === -1 || colTotal === -1) {
-        alert("No se encontraron las columnas: razon_social, fecha o ttotal en la fila 1.");
+        alert("Error: No encontré las columnas exactas 'razon_social', 'fecha' y 'ttotal' en la fila 1.");
         return;
     }
 
-    // Procesamos desde la fila 2 (índice 1)
     for (let i = 1; i < matrix.length; i++) {
         const fila = matrix[i];
-        if (!fila[colNombre]) continue;
+        if (!fila[colNombre] || fila[colNombre] === "") continue;
 
         const nombre = String(fila[colNombre]).trim();
-        const fechaRaw = fila[colFecha];
-        const montoRaw = fila[colTotal];
-
-        // 1. Limpieza de Monto (quitar puntos, comas, signos)
+        
+        // --- LIMPIEZA DE MONEDA ---
+        let valorRaw = fila[colTotal];
         let monto = 0;
-        if (typeof montoRaw === 'string') {
-            // Quitamos todo lo que no sea número o punto decimal
-            monto = parseFloat(montoRaw.replace(/[^\d.,-]/g, '').replace(/\./g, '').replace(',', '.')) || 0;
+        if (typeof valorRaw === 'string') {
+            // Elimina todo menos números, comas y puntos
+            monto = Number(valorRaw.replace(/[^0-9.-]+/g, "")) || 0;
         } else {
-            monto = parseFloat(montoRaw) || 0;
+            monto = Number(valorRaw) || 0;
         }
 
-        // 2. Procesar Fecha
-        let fechaDoc = (fechaRaw instanceof Date) ? fechaRaw : new Date(fechaRaw);
+        // --- PROCESAR FECHA ---
+        let fechaRaw = fila[colFecha];
+        let fechaDoc;
         
+        if (fechaRaw instanceof Date) {
+            fechaDoc = fechaRaw;
+        } else if (!isNaN(fechaRaw) && fechaRaw !== "") {
+            // Por si Excel manda la fecha como número (serie)
+            fechaDoc = new Date((fechaRaw - 25569) * 86400 * 1000);
+        } else {
+            fechaDoc = new Date(fechaRaw);
+        }
+
         if (isNaN(fechaDoc.getTime()) || monto === 0) continue;
 
-        // 3. Diferencia contra 01/01/2026
-        const diffTime = FECHA_CORTE - fechaDoc;
+        // --- CÁLCULO DE DÍAS VS 01/01/2026 ---
+        const diffTime = FECHA_CORTE.getTime() - fechaDoc.getTime();
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-        // Clasificación
         let key = "";
         if (diffDays <= 30) key = '0-30';
         else if (diffDays <= 60) key = '31-60';
@@ -136,14 +139,15 @@ function renderizarTablas(rangos) {
     for (const [rango, info] of Object.entries(rangos)) {
         granTotal += info.total;
         htmlRes += `<tr><td style="text-align:center">${rango} días</td>
-            <td>$ ${info.total.toLocaleString('es-CO', {minimumFractionDigits: 0})}</td>
+            <td>$ ${info.total.toLocaleString('es-CO', {minimumFractionDigits: 0, maximumFractionDigits: 0})}</td>
             <td style="text-align:center">${info.clientes.size}</td></tr>`;
     }
-    htmlRes += `<tr class="total-global"><td>TOTAL CARTERA</td><td>$ ${granTotal.toLocaleString('es-CO')}</td><td>-</td></tr></table>`;
+    htmlRes += `<tr class="total-global"><td>TOTAL CARTERA</td><td>$ ${granTotal.toLocaleString('es-CO', {minimumFractionDigits: 0})}</td><td>-</td></tr></table>`;
     
     let htmlDet = `<h3 class="section-title">Detalle de Saldos</h3><table>
         <tr><th>Cliente</th><th>Rango</th><th>Monto</th></tr>`;
     
+    // Unificar detalle por cliente para mostrarlo ordenado
     Object.entries(rangos).forEach(([rango, info]) => {
         const sorted = new Map([...info.clientes.entries()].sort((a, b) => b[1] - a[1]));
         sorted.forEach((monto, nombre) => {
