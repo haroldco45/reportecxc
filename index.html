@@ -15,7 +15,6 @@
         th, td { border: 1px solid #e0e0e0; padding: 12px; text-align: right; }
         th { background-color: #2ecc71; color: white; text-align: center; font-weight: 600; }
         .total-global { background: #f1c40f; font-weight: bold; }
-        .section-title { margin-top: 40px; color: #2c3e50; border-left: 5px solid #2ecc71; padding-left: 10px; }
         .credits { margin-top: 40px; border-top: 1px solid #eee; padding-top: 20px; font-size: 0.85em; color: #95a5a6; text-align: center; }
     </style>
 </head>
@@ -23,11 +22,11 @@
 
 <div class="container">
     <h2>Reporte de Cartera por Edades (CXC)</h2>
-    <p class="subtitle">Análisis al 01/01/2026 - Vibras Positivas HM</p>
+    <p class="subtitle">Corte al 01/01/2026 - Vibras Positivas HM</p>
     
     <div class="upload-area" id="drop-area">
-        <strong>Sube el archivo de Excel aquí</strong><br>
-        <small>Encabezados en Fila 1: razon_social, fecha, ttotal</small>
+        <strong>Arrastra el archivo aquí</strong><br>
+        <small>Columnas: razon_social, fecha y ttotal (Fila 1)</small>
         <input type="file" id="fileInput" hidden accept=".xlsx, .xls, .csv">
     </div>
 
@@ -43,7 +42,7 @@
 <script>
 const fileInput = document.getElementById('fileInput');
 const dropArea = document.getElementById('drop-area');
-const FECHA_CORTE = new Date(2026, 0, 1); // 1 de Enero de 2026
+const FECHA_CORTE = new Date(2026, 0, 1);
 
 dropArea.addEventListener('click', () => fileInput.click());
 
@@ -76,84 +75,73 @@ function procesarMatriz(matrix) {
     const colTotal = encabezados.indexOf('ttotal');
 
     if (colNombre === -1 || colFecha === -1 || colTotal === -1) {
-        alert("Error: No encontré las columnas exactas 'razon_social', 'fecha' y 'ttotal' en la fila 1.");
+        alert("Error: No encontré las columnas en la fila 1.");
         return;
     }
 
     for (let i = 1; i < matrix.length; i++) {
         const fila = matrix[i];
-        if (!fila[colNombre] || fila[colNombre] === "") continue;
+        if (!fila[colNombre]) continue;
 
         const nombre = String(fila[colNombre]).trim();
         
-        // --- LIMPIEZA DE MONEDA ---
-        let valorRaw = fila[colTotal];
-        let monto = 0;
-        if (typeof valorRaw === 'string') {
-            // Elimina todo menos números, comas y puntos
-            monto = Number(valorRaw.replace(/[^0-9.-]+/g, "")) || 0;
-        } else {
-            monto = Number(valorRaw) || 0;
-        }
+        // --- LIMPIEZA DE MONEDA (Sin puntos) ---
+        let vRaw = String(fila[colTotal]);
+        let monto = parseFloat(vRaw.replace(/[^\d]/g, "")) || 0;
 
-        // --- PROCESAR FECHA ---
-        let fechaRaw = fila[colFecha];
+        // --- PROCESAR FECHA (Manejo de formato DD/MM/YYYY) ---
+        let fRaw = fila[colFecha];
         let fechaDoc;
-        
-        if (fechaRaw instanceof Date) {
-            fechaDoc = fechaRaw;
-        } else if (!isNaN(fechaRaw) && fechaRaw !== "") {
-            // Por si Excel manda la fecha como número (serie)
-            fechaDoc = new Date((fechaRaw - 25569) * 86400 * 1000);
+
+        if (fRaw instanceof Date) {
+            fechaDoc = fRaw;
         } else {
-            fechaDoc = new Date(fechaRaw);
+            // Si viene como "25/09/2015 00:00", lo cortamos
+            let partes = String(fRaw).split(' ')[0].split('/');
+            if (partes.length === 3) {
+                // Formato: Año, Mes (0-11), Día
+                fechaDoc = new Date(partes[2], partes[1] - 1, partes[0]);
+            } else {
+                fechaDoc = new Date(fRaw);
+            }
         }
 
         if (isNaN(fechaDoc.getTime()) || monto === 0) continue;
 
-        // --- CÁLCULO DE DÍAS VS 01/01/2026 ---
         const diffTime = FECHA_CORTE.getTime() - fechaDoc.getTime();
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-        let key = "";
-        if (diffDays <= 30) key = '0-30';
-        else if (diffDays <= 60) key = '31-60';
-        else if (diffDays <= 90) key = '61-90';
-        else if (diffDays <= 120) key = '91-120';
-        else if (diffDays <= 180) key = '121-180';
-        else key = 'mas_180';
+        let key = diffDays <= 30 ? '0-30' : 
+                  diffDays <= 60 ? '31-60' : 
+                  diffDays <= 90 ? '61-90' : 
+                  diffDays <= 120 ? '91-120' : 
+                  diffDays <= 180 ? '121-180' : 'mas_180';
 
         rangos[key].total += monto;
-        const subtotal = rangos[key].clientes.get(nombre) || 0;
-        rangos[key].clientes.set(nombre, subtotal + monto);
+        const acumulado = rangos[key].clientes.get(nombre) || 0;
+        rangos[key].clientes.set(nombre, acumulado + monto);
     }
 
-    renderizarTablas(rangos);
+    renderizar(rangos);
 }
 
-function renderizarTablas(rangos) {
+function renderizar(rangos) {
     let granTotal = 0;
-    let htmlRes = `<h3 class="section-title">Resumen de Cartera</h3><table>
-        <tr><th>Rango</th><th>Total Dinero</th><th>Clientes Únicos</th></tr>`;
+    let htmlRes = `<h3>Consolidado al 01/01/2026</h3><table>
+        <tr><th>Rango</th><th>Valor Total</th><th>Clientes</th></tr>`;
     
     for (const [rango, info] of Object.entries(rangos)) {
         granTotal += info.total;
-        htmlRes += `<tr><td style="text-align:center">${rango} días</td>
-            <td>$ ${info.total.toLocaleString('es-CO', {minimumFractionDigits: 0, maximumFractionDigits: 0})}</td>
-            <td style="text-align:center">${info.clientes.size}</td></tr>`;
+        htmlRes += `<tr><td>${rango} días</td><td>$ ${info.total.toLocaleString('es-CO')}</td><td>${info.clientes.size}</td></tr>`;
     }
-    htmlRes += `<tr class="total-global"><td>TOTAL CARTERA</td><td>$ ${granTotal.toLocaleString('es-CO', {minimumFractionDigits: 0})}</td><td>-</td></tr></table>`;
+    htmlRes += `<tr class="total-global"><td>TOTAL</td><td>$ ${granTotal.toLocaleString('es-CO')}</td><td>-</td></tr></table>`;
     
-    let htmlDet = `<h3 class="section-title">Detalle de Saldos</h3><table>
-        <tr><th>Cliente</th><th>Rango</th><th>Monto</th></tr>`;
+    let htmlDet = `<h3>Detalle por Cliente</h3><table>
+        <tr><th>Cliente</th><th>Rango</th><th>Saldo</th></tr>`;
     
-    // Unificar detalle por cliente para mostrarlo ordenado
     Object.entries(rangos).forEach(([rango, info]) => {
-        const sorted = new Map([...info.clientes.entries()].sort((a, b) => b[1] - a[1]));
-        sorted.forEach((monto, nombre) => {
-            htmlDet += `<tr><td style="text-align:left">${nombre}</td>
-                <td style="text-align:center">${rango} días</td>
-                <td>$ ${monto.toLocaleString('es-CO', {minimumFractionDigits: 0})}</td></tr>`;
+        info.clientes.forEach((monto, nombre) => {
+            htmlDet += `<tr><td style="text-align:left">${nombre}</td><td>${rango} días</td><td>$ ${monto.toLocaleString('es-CO')}</td></tr>`;
         });
     });
 
