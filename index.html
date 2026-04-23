@@ -5,7 +5,7 @@
     <title>Reporte CXC - Vibras Positivas HM</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
+        body { font-family: 'Segoe UI', sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
         .container { max-width: 1100px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
         h2 { color: #1a5276; text-align: center; margin-bottom: 5px; }
         .subtitle { text-align: center; color: #7f8c8d; margin-bottom: 25px; }
@@ -16,19 +16,19 @@
         th { background-color: #2ecc71; color: white; text-align: center; font-weight: 600; }
         .detalles th { background-color: #34495e; }
         .total-global { background: #f1c40f; font-weight: bold; }
-        .credits { margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; font-size: 0.85em; color: #95a5a6; text-align: center; }
         .section-title { margin-top: 40px; color: #2c3e50; border-left: 5px solid #2ecc71; padding-left: 10px; }
+        .credits { margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; font-size: 0.85em; color: #95a5a6; text-align: center; }
     </style>
 </head>
 <body>
 
 <div class="container">
     <h2>Reporte de Cartera por Edades (CXC)</h2>
-    <p class="subtitle">Clasificación automática de cartera y conteo de clientes únicos</p>
+    <p class="subtitle">Análisis de Cartera - Vibras Positivas HM</p>
     
     <div class="upload-area" id="drop-area">
-        <strong>Arrastra aquí tu archivo Excel/CSV</strong> o haz clic para seleccionar<br>
-        <small>(Asegúrate que tenga las columnas: razon_social, fecha y ttotal)</small>
+        <strong>Arrastra aquí el archivo de cartera</strong> o haz clic para seleccionar<br>
+        <small>(Se procesarán las columnas: razon_social, fecha y ttotal)</small>
         <input type="file" id="fileInput" hidden accept=".xlsx, .xls, .csv">
     </div>
 
@@ -52,15 +52,16 @@ fileInput.addEventListener('change', (e) => {
     const reader = new FileReader();
     reader.onload = (evt) => {
         const bstr = evt.target.result;
-        const workbook = XLSX.read(bstr, { type: 'binary' });
-        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+        const workbook = XLSX.read(bstr, { type: 'binary', cellDates: true });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
         procesarCartera(rows);
     };
     reader.readAsBinaryString(file);
 });
 
 function procesarCartera(data) {
-    const hoy = new Date(); // Fecha actual: Abril 2026
+    const hoy = new Date("2026-04-23"); 
     const rangos = {
         '0-30': { total: 0, clientes: new Map() },
         '31-60': { total: 0, clientes: new Map() },
@@ -71,13 +72,34 @@ function procesarCartera(data) {
     };
 
     data.forEach(row => {
-        const fechaDoc = new Date(row.fecha);
-        const monto = parseFloat(row.ttotal) || 0;
-        const nombre = row.razon_social || 'SIN NOMBRE';
+        // 1. Limpiar nombres de columnas (quitar espacios y poner en minúsculas)
+        const rowClean = {};
+        Object.keys(row).forEach(key => {
+            rowClean[key.trim().toLowerCase()] = row[key];
+        });
 
-        if (isNaN(fechaDoc.getTime())) return;
+        // 2. Extraer valores con nombres flexibles
+        const nombre = rowClean['razon_social'] || rowClean['cliente'] || 'SIN NOMBRE';
+        
+        // 3. Limpiar el monto (quitar símbolos de pesos, puntos de miles, etc)
+        let montoRaw = rowClean['ttotal'] || 0;
+        if (typeof montoRaw === 'string') {
+            montoRaw = montoRaw.replace(/[$\s.]/g, '').replace(',', '.');
+        }
+        const monto = parseFloat(montoRaw) || 0;
 
-        const diffDays = Math.ceil(Math.abs(hoy - fechaDoc) / (1000 * 60 * 60 * 24));
+        // 4. Procesar Fecha
+        let fechaDoc = rowClean['fecha'];
+        if (!(fechaDoc instanceof Date)) {
+            fechaDoc = new Date(fechaDoc);
+        }
+
+        if (isNaN(fechaDoc.getTime()) || monto === 0) return;
+
+        // Calcular diferencia
+        const diffTime = Math.abs(hoy - fechaDoc);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
         let key = diffDays <= 30 ? '0-30' : 
                   diffDays <= 60 ? '31-60' : 
                   diffDays <= 90 ? '61-90' : 
@@ -85,48 +107,43 @@ function procesarCartera(data) {
                   diffDays <= 180 ? '121-180' : 'mas_180';
 
         rangos[key].total += monto;
-        // Acumular por cliente individual dentro del rango
         const actual = rangos[key].clientes.get(nombre) || 0;
         rangos[key].clientes.set(nombre, actual + monto);
     });
 
-    renderizarTodo(rangos);
+    renderizarTablas(rangos);
 }
 
-function renderizarTodo(rangos) {
-    // 1. Render Resumen
-    let htmlResumen = `<h3 class="section-title">Consolidado General</h3><table>
+function renderizarTablas(rangos) {
+    let granTotal = 0;
+    let htmlRes = `<h3 class="section-title">Consolidado General</h3><table>
         <tr><th>Rango de Días</th><th>Monto Total Cartera</th><th>Clientes Únicos</th></tr>`;
     
-    let granTotal = 0;
     for (const [rango, info] of Object.entries(rangos)) {
         granTotal += info.total;
-        htmlResumen += `<tr>
+        htmlRes += `<tr>
             <td style="text-align:center">${rango} días</td>
-            <td>$ ${info.total.toLocaleString('es-CO')}</td>
+            <td>$ ${info.total.toLocaleString('es-CO', {minimumFractionDigits: 0})}</td>
             <td style="text-align:center">${info.clientes.size}</td>
         </tr>`;
     }
-    htmlResumen += `<tr class="total-global"><td>TOTAL GENERAL</td><td>$ ${granTotal.toLocaleString('es-CO')}</td><td>-</td></tr></table>`;
-    document.getElementById('resumen-container').innerHTML = htmlResumen;
+    htmlRes += `<tr class="total-global"><td>TOTAL GENERAL</td><td>$ ${granTotal.toLocaleString('es-CO')}</td><td>-</td></tr></table>`;
+    document.getElementById('resumen-container').innerHTML = htmlRes;
 
-    // 2. Render Detalle por Cliente
-    let htmlDetalle = `<h3 class="section-title">Detalle por Cliente y Rango</h3><table class="detalles">
+    let htmlDet = `<h3 class="section-title">Detalle por Cliente</h3><table class="detalles">
         <tr><th>Cliente</th><th>Rango</th><th>Saldo Pendiente</th></tr>`;
     
     for (const [rango, info] of Object.entries(rangos)) {
-        // Ordenar clientes por monto de mayor a menor
-        const clientesSorted = new Map([...info.clientes.entries()].sort((a, b) => b[1] - a[1]));
-        clientesSorted.forEach((monto, nombre) => {
-            htmlDetalle += `<tr>
+        const sorted = new Map([...info.clientes.entries()].sort((a, b) => b[1] - a[1]));
+        sorted.forEach((monto, nombre) => {
+            htmlDet += `<tr>
                 <td style="text-align:left">${nombre}</td>
-                <td style="text-align:center">${rango}</td>
-                <td>$ ${monto.toLocaleString('es-CO')}</td>
+                <td style="text-align:center">${rango} días</td>
+                <td>$ ${monto.toLocaleString('es-CO', {minimumFractionDigits: 0})}</td>
             </tr>`;
         });
     }
-    htmlDetalle += `</table>`;
-    document.getElementById('detalle-container').innerHTML = htmlDetalle;
+    document.getElementById('detalle-container').innerHTML = htmlDet + `</table>`;
 }
 </script>
 </body>
